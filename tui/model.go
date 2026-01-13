@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -265,7 +267,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		
 		// Run interactive command
-		cmd = tea.Exec(installCmd, func(err error) tea.Msg {
+		cmd = tea.Exec(&execCmdAdapter{installCmd}, func(err error) tea.Msg {
 			os.Remove(msg.path) // Cleanup after install
 			return installFinishedMsg{err: err}
 		})
@@ -376,3 +378,12 @@ func downloadUpdateCmd(app config.App) tea.Cmd {
 		return downloadedMsg{path: path}
 	}
 }
+
+// execCmdAdapter adapts exec.Cmd to satisfy tea.ExecCommand interface
+type execCmdAdapter struct {
+*exec.Cmd
+}
+
+func (c *execCmdAdapter) SetStdin(r io.Reader)  { c.Stdin = r }
+func (c *execCmdAdapter) SetStdout(w io.Writer) { c.Stdout = w }
+func (c *execCmdAdapter) SetStderr(w io.Writer) { c.Stderr = w }
