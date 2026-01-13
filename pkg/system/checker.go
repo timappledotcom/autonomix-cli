@@ -10,31 +10,51 @@ import (
 // CheckInstalled checks if an application is installed via various package managers.
 // It returns the version string, the package type, true if found.
 func CheckInstalled(appName string) (string, packages.Type, bool) {
-	// Try each package manager
+	// Generate candidate names to check
+	// e.g. "My App" -> ["My App", "my app", "my-app"]
+	candidates := []string{appName}
 	
-	// Check Snap
-	if ver, ok := checkSnap(appName); ok {
-		return ver, packages.Snap, true
+	lower := strings.ToLower(appName)
+	if lower != appName {
+		candidates = append(candidates, lower)
 	}
 	
-	// Check Flatpak
-	if ver, ok := checkFlatpak(appName); ok {
-		return ver, packages.Flatpak, true
+	kebab := strings.ReplaceAll(lower, " ", "-")
+	if kebab != lower && kebab != appName {
+		candidates = append(candidates, kebab)
 	}
-	
-	// Check Dpkg (Debian/Ubuntu)
-	if ver, ok := checkDpkg(appName); ok {
-		return ver, packages.Deb, true
-	}
-	
-	// Check Pacman (Arch)
-	if ver, ok := checkPacman(appName); ok {
-		return ver, packages.Pacman, true
-	}
-	
-	// Check RPM
-	if ver, ok := checkRpm(appName); ok {
-		return ver, packages.Rpm, true
+
+	for _, name := range candidates {
+		if name == "" {
+			continue
+		}
+		
+		// Try each package manager with this name
+		
+		// Check Snap
+		if ver, ok := checkSnap(name); ok {
+			return ver, packages.Snap, true
+		}
+		
+		// Check Flatpak
+		if ver, ok := checkFlatpak(name); ok {
+			return ver, packages.Flatpak, true
+		}
+		
+		// Check Dpkg (Debian/Ubuntu)
+		if ver, ok := checkDpkg(name); ok {
+			return ver, packages.Deb, true
+		}
+		
+		// Check Pacman (Arch)
+		if ver, ok := checkPacman(name); ok {
+			return ver, packages.Pacman, true
+		}
+		
+		// Check RPM
+		if ver, ok := checkRpm(name); ok {
+			return ver, packages.Rpm, true
+		}
 	}
 
 	return "", packages.Unknown, false
