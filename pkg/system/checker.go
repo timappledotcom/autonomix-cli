@@ -77,9 +77,43 @@ func CheckInstalled(appName string) (string, packages.Type, bool) {
 		if ver, ok := checkRpm(name); ok {
 			return ver, packages.Rpm, true
 		}
+
+		// Check Binary in Path (Fallback)
+		if ver, ok := checkBinary(name); ok {
+			return ver, packages.Unknown, true
+		}
 	}
 
 	return "", packages.Unknown, false
+}
+
+func checkBinary(name string) (string, bool) {
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return "", false
+	}
+	
+	// Try to get version
+	versionArgs := [][]string{
+		{"--version"},
+		{"-v"},
+		{"version"},
+	}
+
+	for _, args := range versionArgs {
+		cmd := exec.Command(path, args...)
+		out, err := cmd.Output()
+		if err == nil && len(out) > 0 {
+			// clean up output, take first line
+			ver := strings.TrimSpace(string(out))
+			if idx := strings.Index(ver, "\n"); idx != -1 {
+				ver = ver[:idx]
+			}
+			return ver, true
+		}
+	}
+	
+	return "detected", true
 }
 
 // GetSystemPreferredType returns the preferred package type for the running system
