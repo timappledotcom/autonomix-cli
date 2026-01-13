@@ -9,8 +9,9 @@ import (
 )
 
 type Asset struct {
-	Name        string `json:"name"`
+	Name               string `json:"name"`
 	BrowserDownloadURL string `json:"browser_download_url"`
+	Size               int    `json:"size"`
 }
 
 type Release struct {
