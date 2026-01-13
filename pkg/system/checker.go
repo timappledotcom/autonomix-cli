@@ -24,7 +24,29 @@ func CheckInstalled(appName string) (string, packages.Type, bool) {
 		candidates = append(candidates, kebab)
 	}
 
-	for _, name := range candidates {
+	// Heuristic: strip "-cli" or " cli" suffix
+	suffixes := []string{"-cli", " cli", "_cli", "cli"}
+	for _, suffix := range suffixes {
+		if strings.HasSuffix(lower, suffix) {
+			trimmed := strings.TrimSuffix(lower, suffix)
+			trimmed = strings.TrimSpace(trimmed)
+			if trimmed != "" {
+				candidates = append(candidates, trimmed)
+			}
+		}
+	}
+
+	// Deduplicate candidates
+	unique := make(map[string]bool)
+	var finalCandidates []string
+	for _, c := range candidates {
+		if !unique[c] {
+			unique[c] = true
+			finalCandidates = append(finalCandidates, c)
+		}
+	}
+
+	for _, name := range finalCandidates {
 		if name == "" {
 			continue
 		}

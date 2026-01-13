@@ -15,31 +15,90 @@ import (
 	"github.com/tim/autonomix-cli/pkg/system"
 )
 
-// DownloadUpdate finds and downloads the update, returning the path to the file.
-func DownloadUpdate(release *github.Release) (string, error) {
+// GetCompatibleAssets returns a list of assets that are compatible with the current system.
+func GetCompatibleAssets(release *github.Release) ([]github.Asset, error) {
 	sysType := system.GetSystemPreferredType()
 	if sysType == packages.Unknown {
-		return "", fmt.Errorf("could not detect system package manager (dpkg, rpm, pacman)")
+		return nil, fmt.Errorf("could not detect system package manager")
 	}
 
-	asset, err := findMatchingAsset(release.Assets, sysType)
-	if err != nil {
-		return "", err
+	arch := runtime.GOARCH
+	// Map go arch to package arch strings commonly used
+	archKeywords := []string{arch}
+	if arch == "amd64" {
+		archKeywords = append(archKeywords, "x86_64", "x64")
+	} else if arch == "arm64" {
+		archKeywords = append(archKeywords, "aarch64", "armv8")
 	}
 
-	// Create temp file
+	var compatible []github.Asset
+	for _, asset := range release.Assets {
+		detectedType := packages.DetectType(asset.Name)
+		if detectedType != sysType {
+			continue
+		}
+
+		nameLower := strings.ToLower(asset.Name)
+		
+		// Include if it matches arch, or if it seems universal (no arch keyword)
+		// But excluding if it matches wrong arch is safer.
+		// Let's include if it matches at least one keyword.
+		
+		matchedArch := false
+		for _, kw := range archKeywords {
+			if strings.Contains(nameLower, kw) {
+				matchedArch = true
+				break
+			}
+		}
+
+		if matchedArch {
+			compatible = append(compatible, asset)
+		}
+	}
+	
+	// If no strict matches, do we want to search for "noarch" or "all"?
+	if len(compatible) == 0 {
+		for _, asset := range release.Assets {
+			detectedType := packages.DetectType(asset.Name)
+			if detectedType != sysType {
+				continue
+			}
+			// Check if it explicitly says another arch
+			// If not, maybe it's universal?
+			// This is heuristic.
+		}
+	}
+
+	return compatible, nil
+}
+
+// DownloadAsset downloads the specified asset
+func DownloadAsset(asset *github.Asset) (string, error) {
 	tempDir := os.TempDir()
 	fileName := asset.Name
 	downloadPath := filepath.Join(tempDir, fileName)
 
-	// Download
-	// In a real CLI we might want progress, but for now blocking is okay or we'll assume TUI handles spinner.
 	fmt.Printf("Downloading %s...\n", asset.BrowserDownloadURL)
 	if err := downloadFile(downloadPath, asset.BrowserDownloadURL); err != nil {
 		return "", fmt.Errorf("failed to download: %w", err)
 	}
 	
 	return downloadPath, nil
+}
+
+// DownloadUpdate finds and downloads the update, returning the path to the file.
+func DownloadUpdate(release *github.Release) (string, error) {
+	assets, err := GetCompatibleAssets(release)
+	if err != nil {
+		return "", err
+	}
+	if len(assets) == 0 {
+		return "", fmt.Errorf("no compatible assets found")
+	}
+	
+	// Default behavior: pick the first one
+	return DownloadAsset(&assets[0])
 }
 
 // GetInstallCmd returns the exec.Cmd to install the package.

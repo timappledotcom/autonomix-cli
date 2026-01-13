@@ -36,6 +36,7 @@ type state int
 const (
 	viewList state = iota
 	viewAdd
+	viewSelectAsset
 )
 
 // Define self repo URL matching main.go to identify it
@@ -75,6 +76,10 @@ type Model struct {
 	quitting  bool
 	err       error
 	status    string
+	
+	// Selection for install
+	assetList list.Model
+	selectedApp *config.App
 }
 
 // openBrowser opens the specified URL in the default browser of the user.
@@ -111,6 +116,11 @@ func NewModel(cfg *config.Config) Model {
 		}
 	}
 
+	
+	assetsL := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+	assetsL.Title = "Select Package to Install"
+	assetsL.SetShowHelp(false)
+
 	ti := textinput.New()
 	ti.Placeholder = "https://github.com/owner/repo"
 	ti.Focus()
@@ -118,10 +128,11 @@ func NewModel(cfg *config.Config) Model {
 	ti.Width = 20
 
 	return Model{
-		list:   l,
-		input:  ti,
-		state:  viewList,
-		config: cfg,
+		list:      l,
+		input:     ti,
+		state:     viewList,
+		config:    cfg,
+		assetList: assetsL,
 	}
 }
 
@@ -141,6 +152,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if m.state == viewSelectAsset {
+			switch msg.String() {
+			case "enter":
+				// Selected asset
+				if index := m.assetList.Index(); index >= 0 && index < len(m.assetList.Items()) {
+					selectedAsset := m.assetList.Items()[index].(assetItem).asset
+					m.status = fmt.Sprintf("Downloading %s...", selectedAsset.Name)
+					m.state = viewList // go back to main view while installing
+					return m, downloadAssetCmd(&selectedAsset)
+				}
+			case "esc", "q":
+				m.state = viewList
+				m.selectedApp = nil
+				return m, nil
+			}
+			var cmd tea.Cmd
+			m.assetList, cmd = m.assetList.Update(msg)
+			return m, cmd
+		}
+
 		if m.state == viewAdd {
 			switch msg.Type {
 			case tea.KeyEnter:
@@ -190,8 +221,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						if vInstalled == "" {
 							action = "install"
 						}
-						m.status = fmt.Sprintf("Downloading %s for %s...", action, selectedItem.app.Name)
-						return m, downloadUpdateCmd(selectedItem.app)
+						m.status = fmt.Sprintf("Fetching assets for %s...", action)
+						return m, fetchAssetsCmd(selectedItem.app)
 					}
 					
 					// Fallback to opening browser
@@ -227,7 +258,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		h, v := docStyle.GetFrameSize()
 		m.list.SetSize(msg.Width-h, msg.Height-v)
 
+	case assetsFetchedMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			m.status = ""
+			return m, nil
+		}
+		
+		if len(msg.assets) == 0 {
+			m.err = fmt.Errorf("no compatible assets found for your system")
+			m.status = ""
+			return m, nil
+		}
+		
+		items := []list.Item{}
+		for _, a := range msg.assets {
+			items = append(items, assetItem{asset: a})
+		}
+		m.assetList.SetItems(items)
+		m.assetList.Title = fmt.Sprintf("Select Asset for %s", msg.app.Name)
+		m.state = viewSelectAsset
+		m.status = ""
+		m.selectedApp = &msg.app
+		return m, nil
+
 	case repoCheckedMsg:
+
 		if msg.err != nil {
 			m.err = msg.err
 			m.state = viewList
@@ -307,6 +363,10 @@ func (m Model) View() string {
 		return fmt.Sprintf("\n  %s\n", m.status)
 	}
 
+	if m.state == viewSelectAsset {
+		return docStyle.Render(m.assetList.View())
+	}
+
 	if m.state == viewAdd {
 		return fmt.Sprintf(
 			"Enter GitHub Repo URL:\n\n%s\n\n(esc to cancel)\n",
@@ -350,6 +410,37 @@ func checkRepoArgCmd(url string) tea.Cmd {
 	}
 }
 
+type assetsFetchedMsg struct {
+	assets []github.Asset
+	app    config.App
+	err    error
+}
+
+func fetchAssetsCmd(app config.App) tea.Cmd {
+	return func() tea.Msg {
+		rel, err := github.GetLatestRelease(app.RepoURL)
+		if err != nil {
+			return assetsFetchedMsg{err: err}
+		}
+		
+		assets, err := installer.GetCompatibleAssets(rel)
+		if err != nil {
+			return assetsFetchedMsg{err: err}
+		}
+		
+		return assetsFetchedMsg{assets: assets, app: app, err: nil}
+	}
+}
+
+type assetItem struct {
+	asset github.Asset
+}
+
+func (i assetItem) Title() string       { return i.asset.Name }
+func (i assetItem) Description() string { return fmt.Sprintf("Size: %d bytes", i.asset.Size) }
+func (i assetItem) FilterValue() string { return i.asset.Name }
+
+
 type updateCheckedMsg struct {
 	index   int
 	release *github.Release
@@ -371,13 +462,9 @@ type installFinishedMsg struct {
 	err error
 }
 
-func downloadUpdateCmd(app config.App) tea.Cmd {
+func downloadAssetCmd(asset *github.Asset) tea.Cmd {
 	return func() tea.Msg {
-		rel, err := github.GetLatestRelease(app.RepoURL)
-		if err != nil {
-			return installFinishedMsg{err: err}
-		}
-		path, err := installer.DownloadUpdate(rel)
+		path, err := installer.DownloadAsset(asset)
 		if err != nil {
 			return installFinishedMsg{err: err}
 		}
