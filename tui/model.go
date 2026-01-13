@@ -178,13 +178,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if index := m.list.Index(); index >= 0 && index < len(m.list.Items()) {
 					selectedItem := m.list.Items()[index].(item)
 					
-					// Check if update available
+					// Check if update available or not installed
 					vInstalled := normalizeVersion(selectedItem.app.Version)
 					vLatest := normalizeVersion(selectedItem.app.Latest)
 					
-					if vInstalled != "" && vLatest != "" && vLatest != vInstalled {
-						// Trigger update
-						m.status = fmt.Sprintf("Downloading update for %s...", selectedItem.app.Name)
+					// Install if not installed OR update available
+					// Note: vLatest check ensures we actually found a release on GitHub
+					if vLatest != "" && (vInstalled == "" || vLatest != vInstalled) {
+						// Trigger install/update
+						action := "update"
+						if vInstalled == "" {
+							action = "install"
+						}
+						m.status = fmt.Sprintf("Downloading %s for %s...", action, selectedItem.app.Name)
 						return m, downloadUpdateCmd(selectedItem.app)
 					}
 					
@@ -256,7 +262,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case downloadedMsg:
-		m.status = "Installing update (enter password if prompted)..."
+		m.status = "Installing (enter password if prompted)..."
 		// Prepare install command
 		installCmd, err := installer.GetInstallCmd(msg.path)
 		if err != nil {
