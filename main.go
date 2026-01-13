@@ -12,6 +12,8 @@ import (
 
 const SelfRepoURL = "https://github.com/timappledotcom/autonomix-cli"
 
+var version = "dev" // Set by goreleaser
+
 func main() {
 	// CLI Argument Handling
 	if len(os.Args) > 1 {
@@ -57,10 +59,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Ensure self is tracked
+	// Ensure self is tracked and version is up to date
 	tracked := false
-	for _, app := range cfg.Apps {
+	for i, app := range cfg.Apps {
 		if app.RepoURL == SelfRepoURL {
+			cfg.Apps[i].Version = version
 			tracked = true
 			break
 		}
@@ -69,10 +72,11 @@ func main() {
 		cfg.Apps = append(cfg.Apps, config.App{
 			Name:    "Autonomix CLI",
 			RepoURL: SelfRepoURL,
-			Version: "dev", // Initial version
+			Version: version,
 		})
-		config.Save(cfg)
 	}
+	// Always save to ensure version is updated
+	config.Save(cfg)
 
 	p := tea.NewProgram(tui.NewModel(cfg), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {

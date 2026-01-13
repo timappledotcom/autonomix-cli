@@ -27,6 +27,9 @@ const (
 	viewAdd
 )
 
+// Define self repo URL matching main.go to identify it
+const SelfRepoURL = "https://github.com/timappledotcom/autonomix-cli"
+
 type item struct {
 	app config.App
 }
@@ -82,6 +85,12 @@ func NewModel(cfg *config.Config) Model {
 }
 
 func (m Model) Init() tea.Cmd {
+	// Find Autonomix CLI and trigger update check
+	for i, app := range m.config.Apps {
+		if app.RepoURL == SelfRepoURL {
+			return checkUpdateCmd(app, i)
+		}
+	}
 	return nil
 }
 
