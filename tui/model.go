@@ -2,7 +2,11 @@ package tui
 
 import (
 	"fmt"
+	"os/exec"
+	"runtime"
+	"strings"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -11,6 +15,10 @@ import (
 	"github.com/tim/autonomix-cli/pkg/github"
 	"github.com/tim/autonomix-cli/pkg/manager"
 )
+
+func normalizeVersion(v string) string {
+	return strings.TrimPrefix(strings.TrimSpace(v), "v")
+}
 
 var (
 	docStyle         = lipgloss.NewStyle().Margin(1, 2)
@@ -42,7 +50,11 @@ func (i item) Description() string {
 	if i.app.Version != "" {
 		status = "Installed: " + i.app.Version
 		style = installedStyle
-		if i.app.Latest != "" && i.app.Latest != i.app.Version {
+		
+		vInstalled := normalizeVersion(i.app.Version)
+		vLatest := normalizeVersion(i.app.Latest)
+		
+		if vLatest != "" && vLatest != vInstalled {
 			status = fmt.Sprintf("Update Available: %s -> %s", i.app.Version, i.app.Latest)
 			style = updateStyle
 		}
@@ -61,6 +73,24 @@ type Model struct {
 	err       error
 }
 
+// openBrowser opens the specified URL in the default browser of the user.
+func openBrowser(url string) error {
+	var cmd string
+	var args []string
+
+	switch runtime.GOOS {
+	case "windows":
+		cmd = "cmd"
+		args = []string{"/c", "start"}
+	case "darwin":
+		cmd = "open"
+	default: // "linux", "freebsd", "openbsd", "netbsd"
+		cmd = "xdg-open"
+	}
+	args = append(args, url)
+	return exec.Command(cmd, args...).Start()
+}
+
 func NewModel(cfg *config.Config) Model {
 	items := []list.Item{}
 	for _, app := range cfg.Apps {
@@ -69,6 +99,13 @@ func NewModel(cfg *config.Config) Model {
 
 	l := list.New(items, list.NewDefaultDelegate(), 0, 0)
 	l.Title = "Autonomix Apps"
+	l.AdditionalShortHelpKeys = func() []key.Binding {
+		return []key.Binding{
+			key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "check updates")),
+			key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open github")),
+		}
+	}
 
 	ti := textinput.New()
 	ti.Placeholder = "https://github.com/owner/repo"
@@ -132,6 +169,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "ctrl+c", "q":
 				m.quitting = true
 				return m, tea.Quit
+			case "enter":
+				// Open release page
+				if index := m.list.Index(); index >= 0 && index < len(m.list.Items()) {
+					selectedItem := m.list.Items()[index].(item)
+					url := selectedItem.app.RepoURL
+					// Try to be smart, if we have a tag, go to that release tag
+					if selectedItem.app.Latest != "" {
+						url = fmt.Sprintf("%s/releases/tag/%s", strings.TrimSuffix(url, ".git"), selectedItem.app.Latest)
+					}
+					openBrowser(url)
+					return m, nil
+				}
 			case "a":
 				m.state = viewAdd
 				m.input.Focus()

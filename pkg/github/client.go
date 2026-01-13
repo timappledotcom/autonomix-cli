@@ -18,6 +18,7 @@ type Release struct {
 	Name    string  `json:"name"`
 	Assets  []Asset `json:"assets"`
 	Body    string  `json:"body"`
+	HTMLURL string  `json:"html_url"`
 }
 
 // GetLatestRelease fetches the latest release info for a github repo url
