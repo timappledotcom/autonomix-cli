@@ -3,42 +3,57 @@ package system
 import (
 	"os/exec"
 	"strings"
+
+	"github.com/tim/autonomix-cli/pkg/packages"
 )
 
 // CheckInstalled checks if an application is installed via various package managers.
-// It returns the version string, true if found, and any error encountered (rarely used).
-func CheckInstalled(appName string) (string, bool) {
+// It returns the version string, the package type, true if found.
+func CheckInstalled(appName string) (string, packages.Type, bool) {
 	// Try each package manager
 	
 	// Check Snap
 	if ver, ok := checkSnap(appName); ok {
-		return ver, true
+		return ver, packages.Snap, true
 	}
 	
 	// Check Flatpak
-	// Flatpak naming is usually reverse DNS (com.example.App), so simple name match is hard.
-	// We'll try a search-like approach on the list.
 	if ver, ok := checkFlatpak(appName); ok {
-		return ver, true
+		return ver, packages.Flatpak, true
 	}
 	
 	// Check Dpkg (Debian/Ubuntu)
 	if ver, ok := checkDpkg(appName); ok {
-		return ver, true
+		return ver, packages.Deb, true
 	}
 	
 	// Check Pacman (Arch)
 	if ver, ok := checkPacman(appName); ok {
-		return ver, true
+		return ver, packages.Pacman, true
 	}
 	
 	// Check RPM
 	if ver, ok := checkRpm(appName); ok {
-		return ver, true
+		return ver, packages.Rpm, true
 	}
 
-	return "", false
+	return "", packages.Unknown, false
 }
+
+// GetSystemPreferredType returns the preferred package type for the running system
+func GetSystemPreferredType() packages.Type {
+	if _, err := exec.LookPath("dpkg"); err == nil {
+		return packages.Deb
+	}
+	if _, err := exec.LookPath("pacman"); err == nil {
+		return packages.Pacman
+	}
+	if _, err := exec.LookPath("rpm"); err == nil {
+		return packages.Rpm
+	}
+	return packages.Unknown
+}
+
 
 func checkSnap(name string) (string, bool) {
 	// snap list name

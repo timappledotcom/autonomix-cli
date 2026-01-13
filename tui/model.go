@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/tim/autonomix-cli/config"
 	"github.com/tim/autonomix-cli/pkg/github"
+	"github.com/tim/autonomix-cli/pkg/installer"
 	"github.com/tim/autonomix-cli/pkg/manager"
 )
 
@@ -71,6 +72,7 @@ type Model struct {
 	config    *config.Config
 	quitting  bool
 	err       error
+	status    string
 }
 
 // openBrowser opens the specified URL in the default browser of the user.
@@ -103,7 +105,7 @@ func NewModel(cfg *config.Config) Model {
 		return []key.Binding{
 			key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "check updates")),
 			key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
-			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open github")),
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "install/open")),
 		}
 	}
 
@@ -170,9 +172,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.quitting = true
 				return m, tea.Quit
 			case "enter":
-				// Open release page
+				// Open release page OR Install Update
 				if index := m.list.Index(); index >= 0 && index < len(m.list.Items()) {
 					selectedItem := m.list.Items()[index].(item)
+					
+					// Check if update available
+					vInstalled := normalizeVersion(selectedItem.app.Version)
+					vLatest := normalizeVersion(selectedItem.app.Latest)
+					
+					if vInstalled != "" && vLatest != "" && vLatest != vInstalled {
+						// Trigger update
+						m.status = fmt.Sprintf("Downloading update for %s...", selectedItem.app.Name)
+						return m, downloadUpdateCmd(selectedItem.app)
+					}
+					
+					// Fallback to opening browser
 					url := selectedItem.app.RepoURL
 					// Try to be smart, if we have a tag, go to that release tag
 					if selectedItem.app.Latest != "" {
@@ -238,6 +252,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmd = m.list.SetItem(idx, item{app: m.config.Apps[idx]})
 			cmds = append(cmds, cmd)
 		}
+
+	case downloadedMsg:
+		m.status = "Installing update (enter password if prompted)..."
+		// Prepare install command
+		installCmd, err := installer.GetInstallCmd(msg.path)
+		if err != nil {
+			m.err = err
+			m.status = ""
+			os.Remove(msg.path) // Cleanup
+			return m, nil
+		}
+		
+		// Run interactive command
+		cmd = tea.Exec(installCmd, func(err error) tea.Msg {
+			os.Remove(msg.path) // Cleanup after install
+			return installFinishedMsg{err: err}
+		})
+		cmds = append(cmds, cmd)
+
+	case installFinishedMsg:
+		m.status = ""
+		if msg.err != nil {
+			m.err = fmt.Errorf("installation failed: %w", msg.err)
+		} else {
+			// Success! Re-check installed versions maybe?
+			// For now, simple success message or clear error
+			m.err = nil
+		}
 	}
 
 	if m.state == viewList {
@@ -251,6 +293,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) View() string {
 	if m.err != nil {
 		return fmt.Sprintf("\n  Error: %v\n\n  Press any key to continue...", m.err)
+	}
+
+	if m.status != "" {
+		return fmt.Sprintf("\n  %s\n", m.status)
 	}
 
 	if m.state == viewAdd {
@@ -306,5 +352,27 @@ func checkUpdateCmd(app config.App, index int) tea.Cmd {
 	return func() tea.Msg {
 		rel, err := github.GetLatestRelease(app.RepoURL)
 		return updateCheckedMsg{index: index, release: rel, err: err}
+	}
+}
+
+type downloadedMsg struct {
+	path string
+}
+
+type installFinishedMsg struct {
+	err error
+}
+
+func downloadUpdateCmd(app config.App) tea.Cmd {
+	return func() tea.Msg {
+		rel, err := github.GetLatestRelease(app.RepoURL)
+		if err != nil {
+			return installFinishedMsg{err: err}
+		}
+		path, err := installer.DownloadUpdate(rel)
+		if err != nil {
+			return installFinishedMsg{err: err}
+		}
+		return downloadedMsg{path: path}
 	}
 }

@@ -60,10 +60,10 @@ func AddApp(cfg *config.Config, repoURL string) (*AddResult, error) {
 	}
 
 	// Check if installed locally
-	if ver, installed := system.CheckInstalled(newApp.Name); installed {
+	if ver, _, installed := system.CheckInstalled(newApp.Name); installed {
 		newApp.Version = ver
 	} else if repoName != "" && repoName != newApp.Name {
-		if ver, installed := system.CheckInstalled(repoName); installed {
+		if ver, _, installed := system.CheckInstalled(repoName); installed {
 			newApp.Version = ver
 		}
 	}
