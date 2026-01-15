@@ -17,6 +17,7 @@ import (
 	"github.com/tim/autonomix-cli/pkg/github"
 	"github.com/tim/autonomix-cli/pkg/installer"
 	"github.com/tim/autonomix-cli/pkg/manager"
+	"github.com/tim/autonomix-cli/pkg/system"
 )
 
 func normalizeVersion(v string) string {
@@ -340,10 +341,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.err = fmt.Errorf("installation failed: %w", msg.err)
 		} else {
-			// Success! Re-check installed versions maybe?
-			// For now, simple success message or clear error
+			// Success! Re-check installed version and update config
 			m.err = nil
+			if m.selectedApp != nil {
+				return m, recheckInstalledCmd(*m.selectedApp)
+			}
 		}
+	
+	case installedRecheckedMsg:
+		// Update the app's version in config and list
+		for idx, app := range m.config.Apps {
+			if app.RepoURL == msg.app.RepoURL {
+				m.config.Apps[idx].Version = msg.version
+				config.Save(m.config)
+				// Update list item
+				cmd = m.list.SetItem(idx, item{app: m.config.Apps[idx]})
+				cmds = append(cmds, cmd)
+				break
+			}
+		}
+		m.selectedApp = nil
 	}
 
 	if m.state == viewList {
@@ -460,6 +477,30 @@ type downloadedMsg struct {
 
 type installFinishedMsg struct {
 	err error
+}
+
+type installedRecheckedMsg struct {
+	app     config.App
+	version string
+}
+
+func recheckInstalledCmd(app config.App) tea.Cmd {
+	return func() tea.Msg {
+		version, _, installed := system.CheckInstalled(app.Name)
+		if !installed {
+			// Try checking with repo name as well
+			parts := strings.Split(app.RepoURL, "/")
+			if len(parts) > 0 {
+				repoName := parts[len(parts)-1]
+				if repoName != app.Name {
+					if ver, _, ok := system.CheckInstalled(repoName); ok {
+						version = ver
+					}
+				}
+			}
+		}
+		return installedRecheckedMsg{app: app, version: version}
+	}
 }
 
 func downloadAssetCmd(asset *github.Asset) tea.Cmd {
