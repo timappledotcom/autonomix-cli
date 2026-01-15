@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
@@ -366,19 +367,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 
 	case installFinishedMsg:
-		m.status = ""
 		if msg.err != nil {
+			m.status = ""
 			m.err = fmt.Errorf("installation failed: %w", msg.err)
 		} else {
 			// Success! Re-check installed version and update config
 			m.err = nil
+			m.status = "Verifying installation..."
 			if m.selectedApp != nil {
-				return m, recheckInstalledCmd(*m.selectedApp)
+				return m, recheckInstalledWithDelayCmd(*m.selectedApp)
 			}
 		}
 	
 	case installedRecheckedMsg:
 		// Update the app's version and latest in config and list
+		m.status = ""
 		for idx, app := range m.config.Apps {
 			if app.RepoURL == msg.app.RepoURL {
 				m.config.Apps[idx].Version = msg.version
@@ -524,6 +527,27 @@ type installedRecheckedMsg struct {
 
 func recheckInstalledCmd(app config.App) tea.Cmd {
 	return func() tea.Msg {
+		version, _, installed := system.CheckInstalled(app.Name)
+		if !installed {
+			// Try checking with repo name as well
+			parts := strings.Split(app.RepoURL, "/")
+			if len(parts) > 0 {
+				repoName := parts[len(parts)-1]
+				if repoName != app.Name {
+					if ver, _, ok := system.CheckInstalled(repoName); ok {
+						version = ver
+					}
+				}
+			}
+		}
+		return installedRecheckedMsg{app: app, version: version, latest: app.Latest}
+	}
+}
+
+func recheckInstalledWithDelayCmd(app config.App) tea.Cmd {
+	return func() tea.Msg {
+		// Wait for package manager database to update
+		time.Sleep(1 * time.Second)
 		version, _, installed := system.CheckInstalled(app.Name)
 		if !installed {
 			// Try checking with repo name as well
