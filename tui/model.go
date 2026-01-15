@@ -21,7 +21,28 @@ import (
 )
 
 func normalizeVersion(v string) string {
-	return strings.TrimPrefix(strings.TrimSpace(v), "v")
+	v = strings.TrimSpace(v)
+	// Remove "v" prefix
+	v = strings.TrimPrefix(v, "v")
+	// Remove Debian/RPM package revision suffix (e.g., "0.1.1-1" -> "0.1.1")
+	if idx := strings.LastIndex(v, "-"); idx > 0 {
+		// Only strip if what follows the dash looks like a package revision (number)
+		suffix := v[idx+1:]
+		// Check if suffix is purely numeric (Debian revision) or contains "el" (RPM dist tag)
+		if len(suffix) > 0 && (isNumeric(suffix) || strings.Contains(suffix, "el")) {
+			v = v[:idx]
+		}
+	}
+	return v
+}
+
+func isNumeric(s string) bool {
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return len(s) > 0
 }
 
 var (
