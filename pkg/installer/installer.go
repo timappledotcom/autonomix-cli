@@ -30,6 +30,9 @@ func GetCompatibleAssets(release *github.Release) ([]github.Asset, error) {
 	} else if arch == "arm64" {
 		archKeywords = append(archKeywords, "aarch64", "armv8")
 	}
+	
+	// Add universal/architecture-independent keywords
+	archKeywords = append(archKeywords, "all", "noarch", "any")
 
 	var compatible []github.Asset
 	for _, asset := range release.Assets {
@@ -151,6 +154,9 @@ func findMatchingAsset(assets []github.Asset, sysType packages.Type) (*github.As
 	} else if arch == "arm64" {
 		archKeywords = append(archKeywords, "aarch64", "armv8")
 	}
+
+	// Add universal/architecture-independent keywords
+	archKeywords = append(archKeywords, "all", "noarch", "any")
 
 	for _, asset := range assets {
 		detectedType := packages.DetectType(asset.Name)
