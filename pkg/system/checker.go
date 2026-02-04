@@ -19,7 +19,8 @@ func CheckInstalled(appName string) (string, packages.Type, bool) {
 		candidates = append(candidates, lower)
 	}
 	
-	kebab := strings.ReplaceAll(lower, " ", "-")
+	// Replace both spaces and underscores with hyphens
+	kebab := strings.ReplaceAll(strings.ReplaceAll(lower, " ", "-"), "_", "-")
 	if kebab != lower && kebab != appName {
 		candidates = append(candidates, kebab)
 	}
