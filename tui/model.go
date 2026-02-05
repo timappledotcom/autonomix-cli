@@ -160,13 +160,12 @@ func NewModel(cfg *config.Config) Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	// Find Autonomix CLI and trigger update check
+	// Check for updates for all tracked apps on startup
+	var cmds []tea.Cmd
 	for i, app := range m.config.Apps {
-		if app.RepoURL == SelfRepoURL {
-			return checkUpdateCmd(app, i)
-		}
+		cmds = append(cmds, checkUpdateCmd(app, i))
 	}
-	return nil
+	return tea.Batch(cmds...)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
