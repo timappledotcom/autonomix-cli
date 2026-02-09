@@ -7,13 +7,13 @@ builds:
       - CGO_ENABLED=0
     goos:
       - linux
+      - darwin
     goarch:
       - amd64
       - arm64
 
 archives:
   - format: tar.gz
-    # this name template makes the OS and Arch compatible with the results of uname.
     name_template: >-
       {{ .ProjectName }}_
       {{- title .Os }}_
@@ -21,7 +21,6 @@ archives:
       {{- else if eq .Arch "386" }}i386
       {{- else }}{{ .Arch }}{{ end }}
       {{- if .Arm }}v{{ .Arm }}{{ end }}
-    # use zip for windows.
     format_overrides:
     - goos: windows
       format: zip
@@ -34,22 +33,19 @@ changelog:
       - '^test:'
 
 nfpms:
-  - file_name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    vendor: Autonomix
-    homepage: https://github.com/tim/autonomix-cli
-    maintainer: Tim <tim@example.com>
+  - file_name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Arch }}"
+    vendor: Tim Apple
+    homepage: https://github.com/timappledotcom
+    maintainer: Tim Apple <tim@timappledotcom>
     description: A CLI for managing packages from GitHub releases.
     license: MIT
     formats:
       - deb
       - rpm
       - archlinux
-    
     bindir: /usr/bin
 
 release:
   github:
     owner: timappledotcom
     name: autonomix-cli
-  # If you want to replace existing releases
-  # replace_existing_artifacts: true

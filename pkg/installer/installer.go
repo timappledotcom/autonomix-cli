@@ -10,10 +10,26 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/tim/autonomix-cli/pkg/binary"
 	"github.com/tim/autonomix-cli/pkg/github"
+	"github.com/tim/autonomix-cli/pkg/homebrew"
 	"github.com/tim/autonomix-cli/pkg/packages"
 	"github.com/tim/autonomix-cli/pkg/system"
 )
+
+type InstallOptions struct {
+	Method      binary.InstallMethod
+	ForceMethod bool
+	Interactive bool
+}
+
+type InstallResult struct {
+	Method  string
+	Version string
+	Path    string
+	Success bool
+	Message string
+}
 
 // GetCompatibleAssets returns a list of assets that are compatible with the current system.
 func GetCompatibleAssets(release *github.Release) ([]github.Asset, error) {
@@ -177,25 +193,119 @@ func GetInstallCmd(path string) (*exec.Cmd, error) {
 	}
 }
 
-func InstallUpdate(release *github.Release) error {
+func InstallUpdate(release *github.Release, opts *InstallOptions) (*InstallResult, error) {
+	if opts == nil {
+		opts = &InstallOptions{Method: binary.Auto}
+	}
+
+	if !opts.ForceMethod || opts.Method == binary.Auto {
+		result, err := tryPackageInstall(release)
+		if err == nil {
+			return result, nil
+		}
+	}
+
+	return tryBinaryInstall(release, opts)
+}
+
+func tryPackageInstall(release *github.Release) (*InstallResult, error) {
 	path, err := DownloadUpdate(release)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer os.Remove(path)
 
 	cmd, err := GetInstallCmd(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	// Connect to stdout/stderr so user sees password prompt and output
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
 	fmt.Printf("Installing %s...\n", path)
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return nil, err
+	}
+
+	return &InstallResult{
+		Method:  "package",
+		Version: release.TagName,
+		Path:    path,
+		Success: true,
+		Message: "Installed via package manager",
+	}, nil
+}
+
+func tryBinaryInstall(release *github.Release, opts *InstallOptions) (*InstallResult, error) {
+	binaries := binary.DetectBinaryAssets(release)
+	if len(binaries) == 0 {
+		return nil, fmt.Errorf("no binary assets found")
+	}
+
+	selected := binaries[0]
+	for _, b := range binaries {
+		if b.Priority > selected.Priority {
+			selected = b
+		}
+	}
+
+	assetPath, err := DownloadAsset(&selected.Asset)
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(assetPath)
+
+	binaryPath, err := binary.ExtractBinary(assetPath, selected.BinaryName)
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(binaryPath)
+
+	if runtime.GOOS == "darwin" && homebrew.IsInstalled() {
+		result, err := tryHomebrewInstall(release, &selected, binaryPath)
+		if err == nil {
+			return result, nil
+		}
+	}
+
+	return installBinaryDirect(binaryPath, selected.BinaryName, opts.Method)
+}
+
+func tryHomebrewInstall(release *github.Release, asset *binary.BinaryAsset, binaryPath string) (*InstallResult, error) {
+	formula, err := homebrew.SearchFormula(asset.BinaryName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Install official formula
+	if err := homebrew.InstallOfficial(formula); err != nil {
+		return nil, err
+	}
+
+	return &InstallResult{
+		Method:  "homebrew",
+		Version: release.TagName,
+		Path:    "",
+		Success: true,
+		Message: fmt.Sprintf("Installed %s via Homebrew", formula),
+	}, nil
+}
+
+func installBinaryDirect(binaryPath, appName string, method binary.InstallMethod) (*InstallResult, error) {
+	result, err := binary.InstallBinary(binaryPath, appName, method)
+	if err != nil {
+		return nil, err
+	}
+
+	return &InstallResult{
+		Method:  "binary",
+		Version: "",
+		Path:    result.Path,
+		Success: true,
+		Message: binary.GetInstallInstructions(result),
+	}, nil
 }
 
 func findMatchingAsset(assets []github.Asset, sysType packages.Type) (*github.Asset, error) {
@@ -255,3 +365,10 @@ func downloadFile(filepath string, url string) error {
 	return err
 }
 
+
+// InstallAndUpdateConfig installs app and updates config
+func InstallAndUpdateConfig(cfg interface{}, appIndex int, opts *InstallOptions) (*InstallResult, error) {
+	// This function requires access to config.Config and config.App
+	// For now we return an error indicating it must be implemented in the caller
+	return nil, fmt.Errorf("InstallAndUpdateConfig must be implemented in the package that has access to config")
+}

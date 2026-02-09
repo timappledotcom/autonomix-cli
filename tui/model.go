@@ -15,7 +15,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/tim/autonomix-cli/config"
+	"github.com/tim/autonomix-cli/pkg/binary"
 	"github.com/tim/autonomix-cli/pkg/github"
+	"github.com/tim/autonomix-cli/pkg/homebrew"
 	"github.com/tim/autonomix-cli/pkg/installer"
 	"github.com/tim/autonomix-cli/pkg/manager"
 	"github.com/tim/autonomix-cli/pkg/packages"
@@ -61,6 +63,7 @@ const (
 	viewList state = iota
 	viewAdd
 	viewSelectAsset
+	viewConfirmDelete
 )
 
 // Define self repo URL matching main.go to identify it
@@ -74,10 +77,18 @@ func (i item) Title() string       { return i.app.Name }
 func (i item) Description() string {
 	status := "Not Installed"
 	style := notInstalledStyle
+	methodInfo := ""
 	
 	if i.app.Version != "" {
 		status = "Installed: " + i.app.Version
 		style = installedStyle
+		
+		if i.app.InstallMethod != "" {
+			methodInfo = fmt.Sprintf(" %s", getMethodIcon(i.app.InstallMethod))
+			if i.app.BinaryPath != "" {
+				methodInfo += fmt.Sprintf(" %s", shortenPath(i.app.BinaryPath))
+			}
+		}
 		
 		vInstalled := normalizeVersion(i.app.Version)
 		vLatest := normalizeVersion(i.app.Latest)
@@ -88,7 +99,7 @@ func (i item) Description() string {
 		}
 	}
 	
-	return fmt.Sprintf("%s (%s)", i.app.RepoURL, style.Render(status))
+	return fmt.Sprintf("%s (%s%s)", i.app.RepoURL, style.Render(status), methodInfo)
 }
 func (i item) FilterValue() string { return i.app.Name }
 
@@ -104,6 +115,7 @@ type Model struct {
 	// Selection for install
 	assetList list.Model
 	selectedApp *config.App
+	deleteIndex int
 }
 
 // openBrowser opens the specified URL in the default browser of the user.
@@ -134,6 +146,15 @@ func NewModel(cfg *config.Config) Model {
 	l.Title = "Autonomix Apps"
 	l.AdditionalShortHelpKeys = func() []key.Binding {
 		return []key.Binding{
+			key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add repo")),
+			key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "check updates")),
+			key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "install/open")),
+		}
+	}
+	l.AdditionalFullHelpKeys = func() []key.Binding {
+		return []key.Binding{
+			key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add repo")),
 			key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "check updates")),
 			key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "install/open")),
@@ -216,6 +237,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+		if m.state == viewConfirmDelete {
+			switch msg.String() {
+			case "d":
+				// Confirmed - perform deletion
+				app := m.config.Apps[m.deleteIndex]
+				
+				// Uninstall based on method
+				switch app.InstallMethod {
+				case config.InstallMethodHomebrew:
+					cmd := exec.Command("brew", "uninstall", app.Name)
+					if err := cmd.Run(); err != nil {
+						m.err = fmt.Errorf("brew uninstall failed: %v", err)
+					}
+				case config.InstallMethodBinary:
+					if app.BinaryPath != "" {
+						if err := os.Remove(app.BinaryPath); err != nil {
+							m.err = fmt.Errorf("failed to remove binary: %v", err)
+						}
+					}
+				}
+				
+				// Remove from config
+				m.config.Apps = append(m.config.Apps[:m.deleteIndex], m.config.Apps[m.deleteIndex+1:]...)
+				config.Save(m.config)
+				m.list.RemoveItem(m.deleteIndex)
+				m.state = viewList
+				return m, nil
+			default:
+				// Cancelled
+				m.state = viewList
+				return m, nil
+			}
+		}
+
 		if m.state == viewList {
 			// Clear error if any key pressed
 			if m.err != nil {
@@ -239,13 +294,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Install if not installed OR update available
 					// Note: vLatest check ensures we actually found a release on GitHub
 					if vLatest != "" && (vInstalled == "" || vLatest != vInstalled) {
-						// Trigger install/update
-						action := "update"
-						if vInstalled == "" {
-							action = "install"
-						}
-						m.status = fmt.Sprintf("Fetching assets for %s...", action)
-						return m, fetchAssetsCmd(selectedItem.app)
+						// Trigger install/update using smart auto-detection
+						m.status = fmt.Sprintf("Installing %s...", selectedItem.app.Name)
+						return m, installAppCmd(selectedItem.app, index)
 					}
 					
 					// Fallback to opening browser
@@ -263,9 +314,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, textinput.Blink
 			case "d":
 				if index := m.list.Index(); index >= 0 && index < len(m.list.Items()) {
-					m.config.Apps = append(m.config.Apps[:index], m.config.Apps[index+1:]...)
-					config.Save(m.config) // Save immediately for now
-					m.list.RemoveItem(index)
+					m.deleteIndex = index
+					m.state = viewConfirmDelete
 				}
 				return m, nil
 			case "u":
@@ -375,7 +425,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case installFinishedMsg:
 		if msg.err != nil {
 			m.status = ""
-			m.err = fmt.Errorf("installation failed: %v", msg.err)
+			m.err = fmt.Errorf("installation failed: %s", formatInstallError(msg.err))
 		} else {
 			// Success! Re-check installed version and update config
 			m.err = nil
@@ -420,6 +470,20 @@ func (m Model) View() string {
 
 	if m.status != "" {
 		return fmt.Sprintf("\n  %s\n", m.status)
+	}
+
+	if m.state == viewConfirmDelete {
+		app := m.config.Apps[m.deleteIndex]
+		msg := fmt.Sprintf("\n  Delete %s?\n\n", app.Name)
+		if app.InstallMethod == config.InstallMethodHomebrew {
+			msg += "  This will uninstall via Homebrew.\n\n"
+		} else if app.InstallMethod == config.InstallMethodBinary && app.BinaryPath != "" {
+			msg += fmt.Sprintf("  This will remove binary: %s\n\n", app.BinaryPath)
+		} else {
+			msg += "  This will stop tracking (package remains installed).\n\n"
+		}
+		msg += "  Press 'd' again to confirm, or any other key to cancel."
+		return msg
 	}
 
 	if m.state == viewSelectAsset {
@@ -474,6 +538,35 @@ type assetsFetchedMsg struct {
 	app     config.App
 	release *github.Release
 	err     error
+}
+
+func installAppCmd(app config.App, index int) tea.Cmd {
+	return func() tea.Msg {
+		rel, err := github.GetLatestRelease(app.RepoURL)
+		if err != nil {
+			return installFinishedMsg{err: err}
+		}
+
+		// Try package install first
+		_, err = installer.InstallUpdate(rel, &installer.InstallOptions{Method: binary.Auto})
+		if err == nil {
+			return installFinishedMsg{err: nil}
+		}
+
+		// On macOS, try Homebrew
+		if runtime.GOOS == "darwin" {
+			if homebrew.IsInstalled() {
+				if formula, err := homebrew.SearchFormula(app.Name); err == nil {
+					if err := homebrew.InstallOfficial(formula); err == nil {
+						return installFinishedMsg{err: nil}
+					}
+				}
+			}
+		}
+
+		// Return the original binary install error
+		return installFinishedMsg{err: err}
+	}
 }
 
 func fetchAssetsCmd(app config.App) tea.Cmd {
@@ -615,3 +708,40 @@ type execCmdAdapter struct {
 func (c *execCmdAdapter) SetStdin(r io.Reader)  { c.Stdin = r }
 func (c *execCmdAdapter) SetStdout(w io.Writer) { c.Stdout = w }
 func (c *execCmdAdapter) SetStderr(w io.Writer) { c.Stderr = w }
+
+// Helper functions
+
+func getMethodIcon(method string) string {
+	switch method {
+	case config.InstallMethodPackage:
+		return "📦"
+	case config.InstallMethodHomebrew:
+		return "🍺"
+	case config.InstallMethodBinary:
+		return "⚙️"
+	default:
+		return ""
+	}
+}
+
+func shortenPath(path string) string {
+	home, _ := os.UserHomeDir()
+	if home != "" && strings.HasPrefix(path, home) {
+		return "~" + strings.TrimPrefix(path, home)
+	}
+	return path
+}
+
+func formatInstallError(err error) string {
+	msg := err.Error()
+	if strings.Contains(msg, "permission denied") {
+		return "Permission denied. Try running with sudo or use --user flag"
+	}
+	if strings.Contains(msg, "no space left") {
+		return "No space left on device"
+	}
+	if strings.Contains(msg, "not found") {
+		return "Binary not found in archive"
+	}
+	return msg
+}

@@ -1,8 +1,8 @@
-# Copilot Instructions for Autonomix CLI
+# Copilot Instructions for Autonomix CLI 
 
 ## Project Overview
 
-Autonomix CLI is a Go-based TUI application that manages Linux application installations from GitHub releases. It tracks applications, detects available package formats (.deb, .rpm, .flatpak, .snap, .appimage, Arch packages), and integrates with system package managers to show installed versions.
+Autonomix CLI is a Go-based application manager that installs and tracks applications from GitHub releases. It supports multiple installation methods: system packages (.deb, .rpm, .flatpak, .snap, .appimage, Arch packages), Homebrew (macOS), and direct binary installation. Provides both CLI and TUI interfaces.
 
 ## Build and Test
 
