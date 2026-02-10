@@ -64,7 +64,7 @@ const (
 )
 
 // Define self repo URL matching main.go to identify it
-const SelfRepoURL = "https://github.com/timappledotcom/autonomix-cli"
+const SelfRepoURL = "https://github.com/sgtapple/autonomix-cli"
 
 type item struct {
 	app config.App

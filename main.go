@@ -10,7 +10,7 @@ import (
 	"github.com/tim/autonomix-cli/tui"
 )
 
-const SelfRepoURL = "https://github.com/timappledotcom/autonomix-cli"
+const SelfRepoURL = "https://github.com/sgtapple/autonomix-cli"
 
 var version = "dev" // Set by goreleaser
 
