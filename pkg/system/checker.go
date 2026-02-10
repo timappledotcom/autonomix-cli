@@ -3,6 +3,7 @@ package system
 import (
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/tim/autonomix-cli/pkg/packages"
 )
@@ -103,14 +104,29 @@ func checkBinary(name string) (string, bool) {
 
 	for _, args := range versionArgs {
 		cmd := exec.Command(path, args...)
-		out, err := cmd.Output()
-		if err == nil && len(out) > 0 {
-			// clean up output, take first line
-			ver := strings.TrimSpace(string(out))
-			if idx := strings.Index(ver, "\n"); idx != -1 {
-				ver = ver[:idx]
+		// Add timeout to prevent hanging on misbehaving binaries
+		done := make(chan error, 1)
+		var out []byte
+		go func() {
+			out, err = cmd.Output()
+			done <- err
+		}()
+		
+		select {
+		case <-done:
+			if err == nil && len(out) > 0 {
+				// clean up output, take first line
+				ver := strings.TrimSpace(string(out))
+				if idx := strings.Index(ver, "\n"); idx != -1 {
+					ver = ver[:idx]
+				}
+				return ver, true
 			}
-			return ver, true
+		case <-time.After(2 * time.Second):
+			// Timeout - kill the process and try next arg
+			if cmd.Process != nil {
+				cmd.Process.Kill()
+			}
 		}
 	}
 	
